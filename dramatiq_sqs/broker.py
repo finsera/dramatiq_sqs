@@ -81,6 +81,7 @@ class SQSBroker(dramatiq.Broker):
         self.dead_letter: bool = dead_letter
         self.max_receives: int = max_receives
         self.sqs: Any = boto3.resource("sqs", **options)
+        self.actor_options.add("content_based_dd")
 
     def consume(self, queue_name: str, prefetch: int = 1, timeout: int = 30000) -> dramatiq.Consumer:
         try:
@@ -88,7 +89,11 @@ class SQSBroker(dramatiq.Broker):
         except KeyError:  # pragma: no cover
             raise dramatiq.QueueNotFound(queue_name)
 
-    def declare_queue(self, queue_name: str) -> None:
+    def declare_queue(self, queue_name: str, *, content_based_dd: bool = False) -> None:
+        """
+        queue_name: prefix for SQS queue.
+        content_based_dd: indicates if queue should use content-based deduplication.
+        """
         if queue_name not in self.queues:
             prefixed_queue_name = queue_name
             if self.namespace is not None:
@@ -98,9 +103,10 @@ class SQSBroker(dramatiq.Broker):
                 }
 
             self.emit_before("declare_queue", queue_name)
-            attributes = {"MessageRetentionPeriod": self.retention, }
+            attributes = {"MessageRetentionPeriod": self.retention}
             if is_fifo(queue_name):
-                attributes["FifoQueue"] = "true"
+                attributes.update({"ContentBasedDeduplication": str(content_based_dd).lower(),
+                                   "FifoQueue": "true"})
             self.queues[queue_name] = self.sqs.create_queue(
                 QueueName=prefixed_queue_name,
                 Attributes=attributes
@@ -148,6 +154,16 @@ class SQSBroker(dramatiq.Broker):
 
     def get_declared_delay_queues(self) -> Iterable[str]:
         return set()
+
+    def declare_actor(self, actor):
+        """
+        Override so we can specify if content based deduplication is enabled.
+        """
+        self.emit_before("declare_actor", actor)
+        self.declare_queue(actor.queue_name,
+                           content_based_dd=actor.options.get("content_based_dd", False))
+        self.actors[actor.actor_name] = actor
+        self.emit_after("declare_actor", actor)
 
 
 class _SQSConsumer(dramatiq.Consumer):

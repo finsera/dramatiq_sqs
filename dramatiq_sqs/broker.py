@@ -98,11 +98,12 @@ class SQSBroker(dramatiq.Broker):
                 }
 
             self.emit_before("declare_queue", queue_name)
+            attributes = {"MessageRetentionPeriod": self.retention, }
+            if is_fifo(queue_name):
+                attributes["FifoQueue"] = "true"
             self.queues[queue_name] = self.sqs.create_queue(
                 QueueName=prefixed_queue_name,
-                Attributes={
-                    "MessageRetentionPeriod": self.retention,
-                }
+                Attributes=attributes
             )
             if self.dead_letter:
                 dead_letter_queue_name = f"{prefixed_queue_name}_dlq"
@@ -231,3 +232,7 @@ def chunk(xs: Iterable[T], *, chunksize=10) -> Iterable[Sequence[T]]:
 
     if chunk:
         yield chunk
+
+
+def is_fifo(queue_name: str) -> bool:
+    return queue_name.endswith(".fifo")

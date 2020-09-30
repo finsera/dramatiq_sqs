@@ -39,6 +39,11 @@ def queue_name(broker):
 
 
 @pytest.fixture
+def fifo_queue_name(broker):
+    return f"queue_{uuid.uuid4()}.fifo"
+
+
+@pytest.fixture
 def worker(broker):
     worker = dramatiq.Worker(broker)
     worker.start()

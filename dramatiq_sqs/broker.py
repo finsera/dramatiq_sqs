@@ -30,6 +30,10 @@ MIN_TIMEOUT = int(os.getenv("DRAMATIQ_SQS_MIN_TIMEOUT", "20"))
 #: to the dead-letter queue (if enabled).
 MAX_RECEIVES = 5
 
+#: Fifo queues optionally take a message_group_id.
+#: This will be the default in case an actor does not provide this value.
+DEFAULT_MESSAGE_GROUP_ID = "-1"
+
 
 class SQSBroker(dramatiq.Broker):
     """A Dramatiq_ broker that can be used with `Amazon SQS`_
@@ -142,10 +146,25 @@ class SQSBroker(dramatiq.Broker):
 
         self.logger.debug("Enqueueing message %r on queue %r.", message.message_id, queue_name)
         self.emit_before("enqueue", message, delay)
-        queue.send_message(
-            MessageBody=encoded_message,
-            DelaySeconds=delay_seconds,
-        )
+        if is_fifo(queue_name):
+            message_group_id = message.kwargs.get("message_group_id", DEFAULT_MESSAGE_GROUP_ID)
+            message_deduplication_id = message.kwargs.get("message_deduplication_id")
+            if message_deduplication_id:
+                queue.send_message(
+                    MessageBody=encoded_message,
+                    MessageGroupId=message_group_id,
+                    MessageDeduplicationId=message_deduplication_id
+                )
+            else:
+                queue.send_message(
+                    MessageBody=encoded_message,
+                    MessageGroupId=message_group_id
+                )
+        else:
+            queue.send_message(
+                MessageBody=encoded_message,
+                DelaySeconds=delay_seconds,
+            )
         self.emit_after("enqueue", message, delay)
         return message
 
@@ -185,10 +204,22 @@ class _SQSConsumer(dramatiq.Consumer):
     def requeue(self, messages: Iterable["_SQSMessage"]) -> None:
         for batch in chunk(messages, chunksize=10):
             # Re-enqueue batches of up to 10 messages.
-            send_response = self.queue.send_messages(Entries=[{
-                "Id": str(i),
-                "MessageBody": message._sqs_message.body,
-            } for i, message in enumerate(batch)])
+            if is_fifo(self.queue.url):
+                entries = [{
+                    "Id": str(i),
+                    "MessageBody": message._sqs_message.body,
+                    "MessageGroupId": message.kwargs.get("message_group_id", DEFAULT_MESSAGE_GROUP_ID),
+                    "MessageDeduplicationId": message.kwargs.get("message_deduplication_id"),
+                } for i, message in enumerate(batch)]
+                for entry in entries:
+                    if not entry["MessageDeduplicationId"]:
+                        del entry["MessageDeduplicationId"]
+            else:
+                entries = [{
+                    "Id": str(i),
+                    "MessageBody": message._sqs_message.body,
+                } for i, message in enumerate(batch)]
+            send_response = self.queue.send_messages(Entries=entries)
 
             # Then delete the ones that were successfully re-enqueued.
             # The rest will have to wait until their visibility

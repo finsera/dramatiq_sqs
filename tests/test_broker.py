@@ -158,3 +158,71 @@ def test_creates_dead_letter_queue():
     with stubber:
         broker.declare_queue("test")
         stubber.assert_no_pending_responses()
+
+
+def test_dont_requeue_duplicate_fifo_messages(broker, fifo_queue_name):
+    # Given that I have an actor
+    @dramatiq.actor(queue_name=fifo_queue_name)
+    def do_work():
+        pass
+
+    # When I send that actor a message
+    do_work.send(message_group_id="0", message_deduplication_id="test_message")
+
+    # And consume the message off the queue
+    consumer = broker.consume(fifo_queue_name)
+    first_message = next(consumer)
+
+    # And requeue the message
+    consumer.requeue([first_message])
+
+    # Then it should NOT be added back because deduplication id.
+    second_message = next(consumer)
+
+    assert not second_message
+
+    # Sending a third message with de duplication id works.
+    do_work.send(message_group_id="0", message_deduplication_id="test_message_two")
+
+    third_message = next(consumer)
+
+    assert third_message
+    assert first_message != third_message
+
+
+def test_consume_fifo_messages_in_order(broker, fifo_queue_name):
+    @dramatiq.actor(queue_name=fifo_queue_name)
+    def do_work():
+        pass
+
+    for idx in range(5):
+        do_work.send(message_group_id="0", message_deduplication_id=str(idx))
+
+    # And consume the message off the queue
+    consumer = broker.consume(fifo_queue_name, prefetch=2)
+
+    previous = -1
+    while msg := next(consumer):
+        current = int(msg.kwargs.get("message_deduplication_id"))
+        assert current > previous
+        previous = current
+        consumer.ack(msg)
+
+
+def test_consume_fifo(broker, fifo_queue_name):
+    @dramatiq.actor(queue_name=fifo_queue_name)
+    def do_work():
+        pass
+
+    for idx in range(5):
+        do_work.send(message_group_id="0", message_deduplication_id=str(idx))
+
+    # And consume the message off the queue
+    consumer = broker.consume(fifo_queue_name, prefetch=2)
+
+    previous = -1
+    while msg := next(consumer):
+        current = int(msg.kwargs.get("message_deduplication_id"))
+        assert current > previous
+        previous = current
+        consumer.ack(msg)

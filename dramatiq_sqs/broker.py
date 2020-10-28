@@ -18,7 +18,7 @@ MAX_MESSAGE_RETENTION = 14 * 86400
 #: The maximum amount of time SQS will wait before redelivering a
 #: message.  This is also the maximum amount of time that a message can
 #: be delayed for.
-MAX_VISIBILITY_TIMEOUT = 2 * 3600
+MAX_VISIBILITY_TIMEOUT = 12 * 3600
 
 #: The max number of messages that may be prefetched at a time.
 MAX_PREFETCH = 10
